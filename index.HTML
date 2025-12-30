@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中文重組句子互動練習 - 雲端連線增強版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 使用 Compat 版本以確保在舊版瀏覽器或本地開啟時有更好的相容性 -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <style>
+        .drop-zone { min-height: 100px; transition: all 0.2s ease; }
+        .word-chip { cursor: pointer; user-select: none; touch-action: manipulation; }
+        .word-chip:active { transform: scale(0.95); }
+        .chip-correct { border-color: #10b981 !important; background-color: #f0fdf4 !important; color: #15803d !important; }
+        .chip-wrong { border-color: #ef4444 !important; background-color: #fef2f2 !important; color: #b91c1c !important; }
+        .modal-overlay { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen flex flex-col items-center p-4 font-sans text-slate-800">
+
+    <!-- 登入視窗 -->
+    <div id="login-modal" class="fixed inset-0 z-[100] flex items-center justify-center modal-overlay p-4">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center border border-slate-100">
+            <div class="text-6xl mb-6">✍️</div>
+            <h2 class="text-2xl font-bold mb-4">中文重組挑戰</h2>
+            <div class="flex flex-col gap-2 mb-6">
+                <p class="text-slate-400 text-sm">請輸入你的姓名開始練習</p>
+                <button id="pre-show-leaderboard" class="text-indigo-600 text-xs font-bold underline">查看目前的成績榜</button>
+            </div>
+            <input type="text" id="student-name" class="w-full p-4 border-2 border-indigo-50 rounded-2xl mb-4 outline-none focus:border-indigo-500 transition-all text-center text-lg" placeholder="姓名" maxlength="20">
+            <button id="start-game-btn" disabled class="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl hover:bg-indigo-700 shadow-lg transition-all active:scale-95 mb-4">
+                連線中...
+            </button>
+            <p id="login-status" class="text-[10px] text-slate-400 font-medium tracking-tight">系統初始化中...</p>
+        </div>
+    </div>
+
+    <div id="app" class="max-w-2xl w-full bg-white rounded-3xl shadow-2xl overflow-hidden mt-4 hidden">
+        <div class="bg-indigo-600 p-6 text-white flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-black">🧩 重組挑戰</h1>
+                <p id="display-user-name" class="text-xs opacity-70 mt-1 font-medium"></p>
+            </div>
+            <button id="show-leaderboard" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-full text-xs font-bold transition-all">📊 成績榜</button>
+        </div>
+
+        <div class="p-6">
+            <div id="status-bar" class="flex justify-between items-center mb-6 bg-slate-50 p-4 rounded-2xl">
+                <div>
+                    <span id="level-indicator" class="text-indigo-600 font-black text-sm uppercase tracking-wider">載入中...</span>
+                    <p id="attempt-indicator" class="text-[10px] text-slate-400 mt-1">嘗試次數: 0</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[10px] text-slate-400 font-bold uppercase">總分</p>
+                    <span id="score-display" class="font-mono text-2xl font-black text-slate-800">0</span>
+                </div>
+            </div>
+
+            <div id="game-content" class="space-y-8">
+                <section>
+                    <div class="flex justify-between items-end mb-3">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest">請在此排列句子</h3>
+                        <button id="reset-btn" class="text-xs font-bold text-indigo-500 hover:text-indigo-700 transition-colors">🔄 還原</button>
+                    </div>
+                    <div id="drop-area" class="drop-zone border-2 border-dashed border-slate-200 rounded-3xl p-6 flex flex-wrap gap-4 items-center bg-slate-50/50 min-h-[120px]"></div>
+                </section>
+
+                <section>
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">可選詞塊</h3>
+                    <div id="word-pool" class="flex flex-wrap gap-4 p-6 bg-white border border-slate-100 rounded-3xl shadow-inner min-h-[120px]"></div>
+                </section>
+
+                <div id="feedback" class="hidden p-4 rounded-2xl text-center font-bold text-lg"></div>
+
+                <div class="flex gap-4">
+                    <button id="check-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-5 rounded-2xl shadow-lg transition-all active:scale-95 text-xl">檢查答案</button>
+                    <button id="next-btn" class="hidden w-full bg-green-600 hover:bg-green-700 text-white font-bold py-5 rounded-2xl shadow-lg transition-all active:scale-95 text-xl">下一題</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 成績榜視窗 -->
+    <div id="leaderboard-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center modal-overlay p-4">
+        <div class="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl flex flex-col max-h-[80vh]">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-black">📊 成績榜</h2>
+                <button id="close-leaderboard" class="text-2xl text-slate-400">&times;</button>
+            </div>
+            <div id="leaderboard-list" class="overflow-y-auto custom-scrollbar space-y-3"></div>
+            <button id="retry-leaderboard" class="mt-4 text-xs text-indigo-500 font-bold underline hidden">重試雲端連線</button>
+        </div>
+    </div>
+
+    <!-- 結算視窗 -->
+    <div id="win-modal" class="hidden fixed inset-0 bg-slate-900/90 flex items-center justify-center p-4 z-[300]">
+        <div class="bg-white rounded-[2.5rem] p-10 max-w-sm w-full text-center">
+            <div class="text-8xl mb-6">🏆</div>
+            <h2 class="text-3xl font-black mb-2">完成練習！</h2>
+            <p id="final-stats" class="text-slate-500 mb-8 text-xl"></p>
+            <button onclick="location.reload()" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl text-lg">再次挑戰</button>
+        </div>
+    </div>
+
+    <script>
+        const defaultQuestions = `我 和 爸爸 到 公園 玩耍 。\n太陽 從 東邊 升起\n大明 喜歡 在 公園 打羽毛球`;
+        let db = null, auth = null;
+        let studentName = "";
+        let currentUser = null;
+        
+        // 優先讀取環境變數，否則使用預設 ID
+        const appId = typeof __app_id !== 'undefined' ? __app_id : "sentence-reorder-app-final";
+
+        // --- 核心初始化函數 ---
+        async function initSystem() {
+            const statusEl = document.getElementById('login-status');
+            const startBtn = document.getElementById('start-game-btn');
+
+            try {
+                // 1. 獲取配置 (支援環境注入或本地空配置)
+                let config = null;
+                if (typeof __firebase_config !== 'undefined') {
+                    config = JSON.parse(__firebase_config);
+                }
+
+                if (!config) {
+                    statusEl.textContent = "提示：未偵測到雲端配置，將以離線模式執行。";
+                    statusEl.className = "text-[10px] text-amber-600 font-bold";
+                    enableOfflineMode();
+                    return;
+                }
+
+                // 2. 初始化 Firebase
+                firebase.initializeApp(config);
+                db = firebase.firestore();
+                auth = firebase.auth();
+                
+                statusEl.textContent = "正在建立雲端隧道...";
+                
+                // 3. 執行身份驗證 (必須 await)
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        const result = await auth.signInWithCustomToken(__initial_auth_token);
+                        currentUser = result.user;
+                    } else {
+                        const result = await auth.signInAnonymously();
+                        currentUser = result.user;
+                    }
+                    statusEl.textContent = "雲端服務已連線";
+                    statusEl.className = "text-[10px] text-green-600 font-bold";
+                } catch (authErr) {
+                    console.error("Auth Error:", authErr);
+                    statusEl.textContent = "驗證失敗：將進入離線模式";
+                    enableOfflineMode();
+                    return;
+                }
+
+                startBtn.disabled = false;
+                startBtn.textContent = "進入練習";
+                
+            } catch (err) {
+                console.error("System Init Error:", err);
+                statusEl.textContent = "連線失敗：請確保在支援的瀏覽器開啟";
+                enableOfflineMode();
+            }
+        }
+
+        function enableOfflineMode() {
+            const startBtn = document.getElementById('start-game-btn');
+            startBtn.disabled = false;
+            startBtn.textContent = "開始練習 (離線)";
+            db = null;
+            auth = null;
+        }
+
+        window.onload = initSystem;
+
+        // --- 遊戲邏輯 ---
+        let activeData = [];
+        let currentIdx = 0;
+        let totalScore = 0;
+        let attempts = 0;
+
+        const dom = {
+            login: document.getElementById('login-modal'),
+            nameInp: document.getElementById('student-name'),
+            startBtn: document.getElementById('start-game-btn'),
+            app: document.getElementById('app'),
+            pool: document.getElementById('word-pool'),
+            drop: document.getElementById('drop-area'),
+            feedback: document.getElementById('feedback'),
+            score: document.getElementById('score-display'),
+            level: document.getElementById('level-indicator'),
+            att: document.getElementById('attempt-indicator'),
+            check: document.getElementById('check-btn'),
+            next: document.getElementById('next-btn'),
+            reset: document.getElementById('reset-btn'),
+            leaderboard: document.getElementById('leaderboard-list'),
+            retryBtn: document.getElementById('retry-leaderboard')
+        };
+
+        dom.startBtn.onclick = async () => {
+            const val = dom.nameInp.value.trim();
+            if (!val) return;
+            studentName = val;
+            dom.login.classList.add('hidden');
+            dom.app.classList.remove('hidden');
+            document.getElementById('display-user-name').textContent = `學生：${studentName}`;
+            loadQuestions();
+        };
+
+        async function loadQuestions() {
+            processQuestions(defaultQuestions);
+            if (!db || !currentUser) return;
+
+            try {
+                // 嚴格路徑：/artifacts/{appId}/public/data/configs/shared_questions
+                const docRef = db.doc(`artifacts/${appId}/public/data/configs/shared_questions`);
+                const doc = await docRef.get();
+                if (doc.exists && doc.data().rawText) {
+                    processQuestions(doc.data().rawText);
+                }
+            } catch (e) {
+                console.warn("無法取得雲端題目，使用預設值");
+            }
+        }
+
+        function processQuestions(raw) {
+            activeData = raw.split('\n').filter(l => l.trim()).map(l => ({
+                words: l.trim().split(/\s+/),
+                correct: l.trim().split(/\s+/),
+            })).filter(q => q.words.length > 1);
+            if (activeData.length > 0) loadLevel();
+        }
+
+        function loadLevel() {
+            const q = activeData[currentIdx];
+            if (!q) return;
+            attempts = 0;
+            updateUI();
+            const shuffled = [...q.words].sort(() => Math.random() - 0.5);
+            renderWords(shuffled);
+            dom.feedback.classList.add('hidden');
+            dom.check.classList.remove('hidden');
+            dom.next.classList.add('hidden');
+        }
+
+        function renderWords(words) {
+            dom.pool.innerHTML = ''; dom.drop.innerHTML = '';
+            words.forEach(w => dom.pool.appendChild(makeChip(w, true)));
+        }
+
+        function makeChip(text, inPool) {
+            const el = document.createElement('div');
+            el.className = "word-chip bg-white border-2 border-slate-100 px-6 py-4 rounded-2xl shadow-sm hover:border-indigo-300 font-bold text-slate-800 transition-all text-xl";
+            el.textContent = text;
+            el.onclick = () => {
+                if (inPool) { dom.pool.removeChild(el); dom.drop.appendChild(makeChip(text, false)); }
+                else { dom.drop.removeChild(el); dom.pool.appendChild(makeChip(text, true)); }
+            };
+            return el;
+        }
+
+        function updateUI() {
+            dom.level.textContent = `題目 ${currentIdx + 1} / ${activeData.length}`;
+            dom.att.textContent = `嘗試次數: ${attempts}`;
+            dom.score.textContent = totalScore;
+        }
+
+        dom.check.onclick = () => {
+            const q = activeData[currentIdx];
+            const items = Array.from(dom.drop.children);
+            if (items.length < q.words.length) return;
+            attempts++; updateUI();
+            let isCorrect = true;
+            items.forEach((chip, i) => {
+                if (chip.textContent === q.correct[i]) chip.classList.add('chip-correct');
+                else { chip.classList.add('chip-wrong'); isCorrect = false; }
+            });
+            if (isCorrect) {
+                totalScore += (attempts === 1) ? 50 : 20;
+                updateUI();
+                showFeedback(attempts === 1 ? "🌟 完美正確！+50" : "✅ 答對了！+20", "green");
+                dom.check.classList.add('hidden'); dom.next.classList.remove('hidden');
+            } else {
+                showFeedback("❌ 順序有誤，再試試看！", "red");
+            }
+        };
+
+        dom.next.onclick = async () => {
+            if (currentIdx < activeData.length - 1) { currentIdx++; loadLevel(); }
+            else {
+                await saveFinalScore();
+                document.getElementById('final-stats').textContent = `${studentName} 的得分：${totalScore}`;
+                document.getElementById('win-modal').classList.remove('hidden');
+            }
+        };
+
+        dom.reset.onclick = () => loadLevel();
+
+        async function saveFinalScore() {
+            if (!db || !currentUser) return;
+            try {
+                // 嚴格路徑：/artifacts/{appId}/public/data/scores
+                await db.collection('artifacts', appId, 'public', 'data', 'scores').add({
+                    name: studentName,
+                    score: totalScore,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    uid: currentUser.uid
+                });
+            } catch (e) {
+                console.error("儲存分數失敗", e);
+            }
+        }
+
+        function showFeedback(txt, col) {
+            dom.feedback.textContent = txt;
+            dom.feedback.className = `p-4 rounded-2xl text-center font-bold text-xl bg-${col}-100 text-${col}-700`;
+            dom.feedback.classList.remove('hidden');
+        }
+
+        async function loadLeaderboard() {
+            document.getElementById('leaderboard-modal').classList.remove('hidden');
+            dom.leaderboard.innerHTML = "<div class='p-10 text-center text-slate-400'>正在獲取最新雲端排名...</div>";
+            dom.retryBtn.classList.add('hidden');
+            
+            if (!db || !currentUser) {
+                dom.leaderboard.innerHTML = "<div class='p-10 text-center text-amber-600 font-bold'>離線模式<br><span class='text-xs font-normal opacity-70'>匯出檔案在某些環境下無法存取雲端。</span></div>";
+                return;
+            }
+
+            try {
+                // 獲取所有數據
+                const snap = await db.collection('artifacts', appId, 'public', 'data', 'scores').get();
+                let list = snap.docs.map(d => d.data());
+                
+                // 在內存中排序（避免需要建立 Firestore Index）
+                list.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+                if (list.length === 0) {
+                    dom.leaderboard.innerHTML = "<div class='p-10 text-center text-slate-400'>目前尚無紀錄</div>";
+                } else {
+                    dom.leaderboard.innerHTML = list.slice(0, 15).map((r, i) => `
+                        <div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-white shadow-sm">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full ${i < 3 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'} text-[10px] font-black">${i+1}</span>
+                                <span class="font-bold text-slate-700 truncate max-w-[150px]">${r.name || '匿名'}</span>
+                            </div>
+                            <span class="font-black text-indigo-600">${r.score}</span>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error("Leaderboard Error", e);
+                dom.leaderboard.innerHTML = `<div class='p-10 text-center text-red-500 font-bold'>讀取失敗<br><span class='text-[10px] font-normal'>錯誤原因: ${e.message}</span></div>`;
+                dom.retryBtn.classList.remove('hidden');
+            }
+        }
+
+        document.getElementById('show-leaderboard').onclick = loadLeaderboard;
+        document.getElementById('pre-show-leaderboard').onclick = loadLeaderboard;
+        dom.retryBtn.onclick = loadLeaderboard;
+        document.getElementById('close-leaderboard').onclick = () => document.getElementById('leaderboard-modal').classList.add('hidden');
+    </script>
+</body>
+</html>
